@@ -97,7 +97,8 @@ impl DingTalkChannel {
         if !resp.status().is_success() {
             let status = resp.status();
             let err = resp.text().await.unwrap_or_default();
-            anyhow::bail!("DingTalk gateway registration failed ({status}): {err}");
+            let sanitized = crate::providers::sanitize_api_error(&err);
+            anyhow::bail!("DingTalk gateway registration failed ({status}): {sanitized}");
         }
 
         let gw: GatewayResponse = resp.json().await?;
@@ -140,7 +141,8 @@ impl Channel for DingTalkChannel {
         if !resp.status().is_success() {
             let status = resp.status();
             let err = resp.text().await.unwrap_or_default();
-            anyhow::bail!("DingTalk webhook reply failed ({status}): {err}");
+            let sanitized = crate::providers::sanitize_api_error(&err);
+            anyhow::bail!("DingTalk webhook reply failed ({status}): {sanitized}");
         }
 
         Ok(())
@@ -163,13 +165,14 @@ impl Channel for DingTalkChannel {
                 Ok(Message::Text(t)) => t,
                 Ok(Message::Close(_)) => break,
                 Err(e) => {
-                    tracing::warn!("DingTalk WebSocket error: {e}");
+                    let sanitized = crate::providers::sanitize_api_error(&e.to_string());
+                    tracing::warn!("DingTalk WebSocket error: {sanitized}");
                     break;
                 }
                 _ => continue,
             };
 
-            let frame: serde_json::Value = match serde_json::from_str(&msg) {
+            let frame: serde_json::Value = match serde_json::from_str(msg.as_ref()) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -195,7 +198,7 @@ impl Channel for DingTalkChannel {
                         "data": "",
                     });
 
-                    if let Err(e) = write.send(Message::Text(pong.to_string())).await {
+                    if let Err(e) = write.send(Message::Text(pong.to_string().into())).await {
                         tracing::warn!("DingTalk: failed to send pong: {e}");
                         break;
                     }
@@ -262,7 +265,7 @@ impl Channel for DingTalkChannel {
                         "message": "OK",
                         "data": "",
                     });
-                    let _ = write.send(Message::Text(ack.to_string())).await;
+                    let _ = write.send(Message::Text(ack.to_string().into())).await;
 
                     let channel_msg = ChannelMessage {
                         id: Uuid::new_v4().to_string(),
@@ -274,6 +277,7 @@ impl Channel for DingTalkChannel {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
+                        thread_ts: None,
                     };
 
                     if tx.send(channel_msg).await.is_err() {
